@@ -7,11 +7,11 @@ const CONFIG = {
   FIGMA_FILE_KEY: 'oZGlxnWyOHTAgG6cyLkNJh',
   GOOGLE_SHEETS_ID: '1liLtRG7yUe1T5wfwEqdOy_B4H-tne2cDoBMIbZZnTUI',
   GOOGLE_CREDENTIALS: JSON.parse(process.env.GOOGLE_CREDENTIALS),
-  MAX_RESULTS: 100 // Лимит результатов (можно увеличить)
+  MAX_RESULTS: 100
 };
 
-async function getComponentsWithDescription() {
-  console.log('🔍 Получаем компоненты с описанием...');
+async function getValidComponents() {
+  console.log('🔍 Получаем компоненты...');
   const response = await fetch(`https://api.figma.com/v1/files/${CONFIG.FIGMA_FILE_KEY}/components`, {
     headers: { 'X-FIGMA-TOKEN': CONFIG.FIGMA_TOKEN }
   });
@@ -20,9 +20,15 @@ async function getComponentsWithDescription() {
   
   const data = await response.json();
   
-  // Фильтруем компоненты с непустым description
+  // Фильтруем компоненты:
+  // 1. С описанием
+  // 2. Без "=" в названии
   return (data.meta?.components || [])
-    .filter(comp => comp.description && comp.description.trim() !== '')
+    .filter(comp => {
+      const hasDescription = comp.description && comp.description.trim() !== '';
+      const hasNoEquals = !comp.name.includes('=');
+      return hasDescription && hasNoEquals;
+    })
     .slice(0, CONFIG.MAX_RESULTS);
 }
 
@@ -45,7 +51,7 @@ async function updateGoogleSheets(components) {
     ])
   ];
 
-  console.log(`📝 Найдено ${components.length} компонентов с описанием`);
+  console.log(`📝 Отфильтровано ${components.length} валидных компонентов`);
 
   // Очистка и запись
   await sheets.spreadsheets.values.clear({
@@ -65,15 +71,15 @@ async function main() {
   try {
     console.log('🚀 Запуск процесса...');
     
-    const components = await getComponentsWithDescription();
+    const components = await getValidComponents();
     
     if (components.length === 0) {
-      console.log('ℹ️ Компоненты с описанием не найдены');
+      console.log('ℹ️ Подходящих компонентов не найдено');
       return;
     }
     
-    console.log(`🔧 Найдено ${components.length} компонентов с описанием:`);
-    console.log(components.map(c => `- ${c.name}: ${c.description}`).join('\n'));
+    console.log(`🔧 Валидные компоненты (${components.length}):`);
+    console.log(components.map(c => `- ${c.name}`).join('\n'));
     
     await updateGoogleSheets(components);
     

@@ -22,18 +22,18 @@ async function getFigmaComponents() {
   return data.meta?.components?.slice(0, CONFIG.COMPONENTS_LIMIT) || [];
 }
 
-async function getComponentParameters(componentIds) {
-  console.log('📊 Получаем параметры компонентов...');
+async function getComponentUsage(componentIds) {
+  console.log('📊 Получаем данные об использовании...');
   const response = await fetch(
-    `https://api.figma.com/v1/files/${CONFIG.FIGMA_FILE_KEY}/nodes?ids=${componentIds.join(',')}`,
+    `https://api.figma.com/v1/files/${CONFIG.FIGMA_FILE_KEY}/component_usages?ids=${componentIds.join(',')}`,
     { headers: { 'X-FIGMA-TOKEN': CONFIG.FIGMA_TOKEN } }
   );
   
-  if (!response.ok) throw new Error(`Ошибка получения параметров: ${response.statusText}`);
+  if (!response.ok) throw new Error(`Ошибка получения данных: ${response.statusText}`);
   return await response.json();
 }
 
-async function updateGoogleSheets(components) {
+async function updateGoogleSheets(components, usageData) {
   const auth = new google.auth.GoogleAuth({
     credentials: CONFIG.GOOGLE_CREDENTIALS,
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
@@ -43,16 +43,15 @@ async function updateGoogleSheets(components) {
 
   // Подготовка данных
   const rows = [
-    ['Компонент (ссылка на Figma)', 'Количество использований', 'Параметры'],
-    ...components.map(comp => [
-      `=HYPERLINK("https://www.figma.com/file/${CONFIG.FIGMA_FILE_KEY}/?node-id=${comp.node_id}", "${comp.name}")`,
-      comp.instances_count || 0,
-      JSON.stringify({
-        width: comp.absoluteBoundingBox?.width,
-        height: comp.absoluteBoundingBox?.height,
-        type: comp.type
-      }, null, 2)
-    ])
+    ['Компонент', 'Количество использований', 'Ссылка'],
+    ...components.map(comp => {
+      const usage = usageData.meta[comp.node_id] || {};
+      return [
+        comp.name,
+        usage.instances_count || 0,
+        `https://www.figma.com/file/${CONFIG.FIGMA_FILE_KEY}/?node-id=${comp.node_id}`
+      ];
+    })
   ];
 
   console.log('📝 Пример данных:', rows.slice(1, 3));
@@ -81,19 +80,12 @@ async function main() {
     
     console.log(`🔧 Обрабатываем ${components.length} компонентов`);
     
-    // Получаем параметры
+    // Получаем данные об использовании
     const componentIds = components.map(c => c.node_id);
-    const details = await getComponentParameters(componentIds);
-    
-    // Обогащаем данные параметрами
-    const enrichedComponents = components.map(comp => ({
-      ...comp,
-      ...details.nodes[comp.node_id]?.document,
-      absoluteBoundingBox: details.nodes[comp.node_id]?.document?.absoluteBoundingBox
-    }));
+    const usageData = await getComponentUsage(componentIds);
     
     // Записываем в таблицу
-    await updateGoogleSheets(enrichedComponents);
+    await updateGoogleSheets(components, usageData);
     
     console.log(`✅ Готово! Таблица обновлена: 
     https://docs.google.com/spreadsheets/d/${CONFIG.GOOGLE_SHEETS_ID}/edit`);

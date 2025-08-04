@@ -22,18 +22,7 @@ async function getFigmaComponents() {
   return data.meta?.components?.slice(0, CONFIG.COMPONENTS_LIMIT) || [];
 }
 
-async function getComponentUsage(componentIds) {
-  console.log('📊 Получаем данные об использовании...');
-  const response = await fetch(
-    `https://api.figma.com/v1/files/${CONFIG.FIGMA_FILE_KEY}/component_usages?ids=${componentIds.join(',')}`,
-    { headers: { 'X-FIGMA-TOKEN': CONFIG.FIGMA_TOKEN } }
-  );
-  
-  if (!response.ok) throw new Error(`Ошибка получения данных: ${response.statusText}`);
-  return await response.json();
-}
-
-async function updateGoogleSheets(components, usageData) {
+async function updateGoogleSheets(components) {
   const auth = new google.auth.GoogleAuth({
     credentials: CONFIG.GOOGLE_CREDENTIALS,
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
@@ -43,15 +32,12 @@ async function updateGoogleSheets(components, usageData) {
 
   // Подготовка данных
   const rows = [
-    ['Компонент', 'Количество использований', 'Ссылка'],
-    ...components.map(comp => {
-      const usage = usageData.meta[comp.node_id] || {};
-      return [
-        comp.name,
-        usage.instances_count || 0,
-        `https://www.figma.com/file/${CONFIG.FIGMA_FILE_KEY}/?node-id=${comp.node_id}`
-      ];
-    })
+    ['Компонент', 'Использований', 'Ссылка'],
+    ...components.map(comp => [
+      comp.name,
+      comp.instances_count || 0, // Используем данные из основного запроса
+      `https://www.figma.com/file/${CONFIG.FIGMA_FILE_KEY}/?node-id=${comp.node_id}`
+    ])
   ];
 
   console.log('📝 Пример данных:', rows.slice(1, 3));
@@ -74,18 +60,15 @@ async function main() {
   try {
     console.log('🚀 Запуск процесса...');
     
-    // Получаем компоненты
+    // Получаем компоненты (уже включая данные об использовании)
     const components = await getFigmaComponents();
     if (components.length === 0) throw new Error('Не найдено компонентов');
     
-    console.log(`🔧 Обрабатываем ${components.length} компонентов`);
-    
-    // Получаем данные об использовании
-    const componentIds = components.map(c => c.node_id);
-    const usageData = await getComponentUsage(componentIds);
+    console.log(`🔧 Обрабатываем ${components.length} компонентов:`);
+    console.log(components.map(c => `- ${c.name} (использований: ${c.instances_count || 0})`).join('\n'));
     
     // Записываем в таблицу
-    await updateGoogleSheets(components, usageData);
+    await updateGoogleSheets(components);
     
     console.log(`✅ Готово! Таблица обновлена: 
     https://docs.google.com/spreadsheets/d/${CONFIG.GOOGLE_SHEETS_ID}/edit`);

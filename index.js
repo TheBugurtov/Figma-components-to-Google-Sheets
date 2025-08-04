@@ -7,19 +7,43 @@ const CONFIG = {
   FIGMA_FILE_KEY: 'oZGlxnWyOHTAgG6cyLkNJh',
   GOOGLE_SHEETS_ID: '1liLtRG7yUe1T5wfwEqdOy_B4H-tne2cDoBMIbZZnTUI',
   GOOGLE_CREDENTIALS: JSON.parse(process.env.GOOGLE_CREDENTIALS),
-  COMPONENTS_LIMIT: 10
+  COMPONENTS_LIMIT: 10,
+  FRAME_NAME: "Component" // Имя фрейма для фильтрации
 };
 
-async function getFigmaComponents() {
-  console.log('🔍 Получаем компоненты из Figma...');
-  const response = await fetch(`https://api.figma.com/v1/files/${CONFIG.FIGMA_FILE_KEY}/components`, {
+async function getFigmaFileStructure() {
+  console.log('📂 Получаем структуру файла...');
+  const response = await fetch(`https://api.figma.com/v1/files/${CONFIG.FIGMA_FILE_KEY}`, {
     headers: { 'X-FIGMA-TOKEN': CONFIG.FIGMA_TOKEN }
   });
   
   if (!response.ok) throw new Error(`Ошибка API: ${response.statusText}`);
+  return await response.json();
+}
+
+function findComponentsInFrames(document, frameName) {
+  console.log(`🔍 Ищем фреймы с именем "${frameName}"...`);
+  const components = [];
   
-  const data = await response.json();
-  return data.meta?.components?.slice(0, CONFIG.COMPONENTS_LIMIT) || [];
+  function traverse(node) {
+    if (node.name === frameName && node.type === "FRAME") {
+      console.log(`Найден фрейм "${frameName}" (ID: ${node.id})`);
+      if (node.children) {
+        node.children.forEach(child => {
+          if (child.type === "COMPONENT") {
+            components.push(child);
+          }
+        });
+      }
+    }
+    
+    if (node.children) {
+      node.children.forEach(traverse);
+    }
+  }
+  
+  document.document.children.forEach(traverse);
+  return components;
 }
 
 async function updateGoogleSheets(components) {
@@ -32,11 +56,12 @@ async function updateGoogleSheets(components) {
 
   // Подготовка данных
   const rows = [
-    ['Компонент', 'Использований', 'Ссылка'],
-    ...components.map(comp => [
+    ['Компонент', 'Использований', 'Ссылка', 'Фрейм-источник'],
+    ...components.slice(0, CONFIG.COMPONENTS_LIMIT).map(comp => [
       comp.name,
-      comp.instances_count || 0, // Используем данные из основного запроса
-      `https://www.figma.com/file/${CONFIG.FIGMA_FILE_KEY}/?node-id=${comp.node_id}`
+      comp.instances_count || 0,
+      `https://www.figma.com/file/${CONFIG.FIGMA_FILE_KEY}/?node-id=${comp.id}`,
+      CONFIG.FRAME_NAME
     ])
   ];
 
@@ -45,7 +70,7 @@ async function updateGoogleSheets(components) {
   // Очистка и запись
   await sheets.spreadsheets.values.clear({
     spreadsheetId: CONFIG.GOOGLE_SHEETS_ID,
-    range: 'A1:C1000'
+    range: 'A1:D1000'
   });
 
   await sheets.spreadsheets.values.update({
@@ -60,12 +85,18 @@ async function main() {
   try {
     console.log('🚀 Запуск процесса...');
     
-    // Получаем компоненты (уже включая данные об использовании)
-    const components = await getFigmaComponents();
-    if (components.length === 0) throw new Error('Не найдено компонентов');
+    // Получаем полную структуру файла
+    const fileData = await getFigmaFileStructure();
     
-    console.log(`🔧 Обрабатываем ${components.length} компонентов:`);
-    console.log(components.map(c => `- ${c.name} (использований: ${c.instances_count || 0})`).join('\n'));
+    // Ищем компоненты только в указанных фреймах
+    const components = findComponentsInFrames(fileData, CONFIG.FRAME_NAME);
+    
+    if (components.length === 0) {
+      throw new Error(`Не найдено компонентов во фреймах с именем "${CONFIG.FRAME_NAME}"`);
+    }
+    
+    console.log(`🔧 Найдено ${components.length} компонентов в фреймах "${CONFIG.FRAME_NAME}":`);
+    console.log(components.map(c => `- ${c.name}`).join('\n'));
     
     // Записываем в таблицу
     await updateGoogleSheets(components);

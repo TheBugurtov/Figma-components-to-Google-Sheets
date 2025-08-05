@@ -1,7 +1,6 @@
 const fetch = require('node-fetch');
 const { google } = require('googleapis');
 
-// Конфигурация
 const CONFIG = {
   FIGMA_TOKEN: process.env.FIGMA_TOKEN,
   FIGMA_FILE_KEY: 'oZGlxnWyOHTAgG6cyLkNJh',
@@ -23,13 +22,18 @@ async function getFullFileStructure() {
 function findComponentsRecursive(node, pageName, results = []) {
   if (!node) return results;
 
-  if (node.type === 'COMPONENT') {
-    const isValid = (
-      node.description && 
-      node.description.trim() && 
-      !node.name.includes('=') &&
-      !node.name.startsWith('_')
-    );
+  if (node.type === 'COMPONENT' || node.type === 'COMPONENT_SET') {
+    const hasDescription = !!node.description;
+    const hasNonEmptyDescription = node.description && node.description.trim().length > 0;
+    const hasEqualSign = node.name.includes('=');
+
+    const isValid = hasDescription && hasNonEmptyDescription && !hasEqualSign;
+
+    // 🔍 Логирование
+    console.log(`[${isValid ? '✅' : '❌'}] ${node.name} (${node.type})`);
+    if (!hasDescription) console.log('   ⛔ Нет description');
+    if (hasDescription && !hasNonEmptyDescription) console.log('   ⛔ Description пустой');
+    if (hasEqualSign) console.log('   ⛔ В имени есть "="');
 
     if (isValid) {
       results.push({
@@ -41,10 +45,10 @@ function findComponentsRecursive(node, pageName, results = []) {
     }
   }
 
-  if (node.children) {
-    node.children.forEach(child => {
+  if (node.children && Array.isArray(node.children)) {
+    for (const child of node.children) {
       findComponentsRecursive(child, pageName, results);
-    });
+    }
   }
 
   return results;
@@ -93,8 +97,19 @@ async function getAllComponents() {
         `https://api.figma.com/v1/files/${CONFIG.FIGMA_FILE_KEY}/nodes?ids=${page.id}&depth=${CONFIG.SCAN_DEPTH}`,
         { headers: { 'X-FIGMA-TOKEN': CONFIG.FIGMA_TOKEN } }
       );
+
+      if (!response.ok) {
+        console.error(`❌ Ошибка получения узлов для страницы ${page.name}:`, await response.text());
+        continue;
+      }
       
       const { nodes } = await response.json();
+
+      if (!nodes || !nodes[page.id]) {
+        console.warn(`⚠️ Узлы не найдены для страницы: ${page.name}`);
+        continue;
+      }
+
       const pageComponents = findComponentsRecursive(nodes[page.id], page.name);
       
       allComponents = [...allComponents, ...pageComponents];
@@ -158,7 +173,7 @@ async function main() {
     
     if (components.length > 0) {
       await updateSheets(components);
-      console.log(`🔄 Данные записаны за ${Math.round((Date.now() - startTime)/1000)} сек`);
+      console.log(`🔄 Данные записаны за ${Math.round((Date.now() - startTime) / 1000)} сек`);
       console.log(`🔗 Ссылка на таблицу: https://docs.google.com/spreadsheets/d/${CONFIG.GOOGLE_SHEETS_ID}/edit`);
     } else {
       console.log('ℹ️ Компоненты не найдены. Проверьте:');

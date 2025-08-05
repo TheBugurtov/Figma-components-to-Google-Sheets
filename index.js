@@ -7,11 +7,10 @@ const CONFIG = {
   FIGMA_FILE_KEY: 'oZGlxnWyOHTAgG6cyLkNJh',
   GOOGLE_SHEETS_ID: '1liLtRG7yUe1T5wfwEqdOy_B4H-tne2cDoBMIbZZnTUI',
   GOOGLE_CREDENTIALS: JSON.parse(process.env.GOOGLE_CREDENTIALS),
-  MAX_COMPONENTS: 2000, // Увеличенный лимит
-  SCAN_DEPTH: 999 // Глубина сканирования
+  MAX_COMPONENTS: 2000,
+  SCAN_DEPTH: 999
 };
 
-// 1. Получаем полную структуру файла
 async function getFullFileStructure() {
   console.log('📂 Получаем структуру файла...');
   const response = await fetch(`https://api.figma.com/v1/files/${CONFIG.FIGMA_FILE_KEY}`, {
@@ -21,30 +20,27 @@ async function getFullFileStructure() {
   return await response.json();
 }
 
-// 2. Рекурсивный поиск компонентов с улучшенной фильтрацией
 function findComponentsRecursive(node, pageName, results = []) {
   if (!node) return results;
 
-  // Проверяем текущий узел
   if (node.type === 'COMPONENT') {
     const isValid = (
-      node.description?.trim() && 
+      node.description && 
+      node.description.trim() && 
       !node.name.includes('=') &&
-      !node.name.startsWith('_') // Игнорируем компоненты, начинающиеся с _
+      !node.name.startsWith('_')
     );
 
     if (isValid) {
       results.push({
         id: node.id,
-        name: node.name.replace(/\n/g, ' '), // Удаляем переносы строк
+        name: node.name.replace(/\n/g, ' '),
         description: node.description.trim(),
-        page: pageName,
-        node: node // Сохраняем всю ноду для дебага
+        page: pageName
       });
     }
   }
 
-  // Рекурсивно обрабатываем детей
   if (node.children) {
     node.children.forEach(child => {
       findComponentsRecursive(child, pageName, results);
@@ -54,10 +50,9 @@ function findComponentsRecursive(node, pageName, results = []) {
   return results;
 }
 
-// 3. Получаем данные об использовании пачками
 async function getComponentsUsage(componentIds) {
   console.log('📊 Получаем данные об использовании...');
-  const chunkSize = 100; // Figma API ограничивает 100 ID в запросе
+  const chunkSize = 100;
   const usageData = {};
 
   for (let i = 0; i < componentIds.length; i += chunkSize) {
@@ -79,7 +74,6 @@ async function getComponentsUsage(componentIds) {
   return usageData;
 }
 
-// 4. Основная функция сбора данных
 async function getAllComponents() {
   try {
     console.log('🔍 Начинаем сканирование...');
@@ -88,12 +82,10 @@ async function getAllComponents() {
     let allComponents = [];
     const pageNames = {};
 
-    // Сначала собираем имена всех страниц
     document.children.forEach(page => {
       pageNames[page.id] = page.name;
     });
 
-    // Обрабатываем каждую страницу
     for (const page of document.children) {
       console.log(`📄 Обрабатываем страницу: ${page.name}`);
       
@@ -114,13 +106,11 @@ async function getAllComponents() {
       }
     }
 
-    // Получаем данные об использовании
     const usageData = await getComponentsUsage(allComponents.map(c => c.id));
     
-    // Обогащаем компоненты
     return allComponents.map(comp => ({
       ...comp,
-      instances_count: usageData[comp.id]?.instances_count || 0
+      instances_count: usageData[comp.id] ? usageData[comp.id].instances_count : 0
     }));
 
   } catch (error) {
@@ -129,7 +119,6 @@ async function getAllComponents() {
   }
 }
 
-// 5. Запись в Google Sheets
 async function updateSheets(components) {
   const auth = new google.auth.GoogleAuth({
     credentials: CONFIG.GOOGLE_CREDENTIALS,
@@ -138,7 +127,6 @@ async function updateSheets(components) {
 
   const sheets = google.sheets({ version: 'v4', auth });
 
-  // Подготовка данных
   const rows = [
     ['Страница', 'Компонент', 'Описание', 'Использований', 'Ссылка'],
     ...components.map(comp => [
@@ -152,7 +140,6 @@ async function updateSheets(components) {
 
   console.log('📝 Пример данных:', rows.slice(1, 4));
 
-  // Запись
   await sheets.spreadsheets.values.update({
     spreadsheetId: CONFIG.GOOGLE_SHEETS_ID,
     range: 'A1',
@@ -161,7 +148,6 @@ async function updateSheets(components) {
   });
 }
 
-// Главная функция
 async function main() {
   try {
     console.log('🚀 Запуск процесса...');
@@ -186,4 +172,4 @@ async function main() {
   }
 }
 
-main();
+main().catch(console.error);

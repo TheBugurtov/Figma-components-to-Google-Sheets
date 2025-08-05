@@ -158,7 +158,7 @@ async function main() {
     
     if (components.length > 0) {
       await updateSheets(components);
-      console.log(`🔄 Данные записаны за ${Math.round((Date.now() - startTime)/1000} сек`);
+      console.log(`🔄 Данные записаны за ${Math.round((Date.now() - startTime)/1000)} сек`);
       console.log(`🔗 Ссылка на таблицу: https://docs.google.com/spreadsheets/d/${CONFIG.GOOGLE_SHEETS_ID}/edit`);
     } else {
       console.log('ℹ️ Компоненты не найдены. Проверьте:');

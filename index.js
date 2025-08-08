@@ -33,25 +33,25 @@ async function getFullFileStructure(fileKey) {
   return await res.json();
 }
 
-function extractComponentsWithTags(node, currentPage = null, components = []) {
+function extractNodesWithTags(node, currentPage = null, components = []) {
   if (node.type === 'CANVAS') currentPage = node.name;
 
-  if (node.type === 'COMPONENT' || node.type === 'COMPONENT_SET') {
-    const desc = node.description || '';
-    const tags = desc.match(/#[\wа-яёА-ЯЁ-]+/gi) || [];
-    if (tags.length > 0) {
-      components.push({
-        id: node.id,
-        name: node.name,
-        description: desc,
-        tags: tags.map(t => t.slice(1)).join(', '),
-        page: currentPage || 'Unknown',
-      });
-    }
+  const desc = node.description || '';
+  const tags = desc.match(/#[\wа-яёА-ЯЁ-]+/gi) || [];
+
+  if (tags.length > 0) {
+    components.push({
+      id: node.id,
+      name: node.name,
+      description: desc,
+      tags: tags.map(t => t.slice(1)).join(', '),
+      page: currentPage || 'Unknown',
+      type: node.type
+    });
   }
 
   if (node.children) {
-    node.children.forEach(child => extractComponentsWithTags(child, currentPage, components));
+    node.children.forEach(child => extractNodesWithTags(child, currentPage, components));
   }
   return components;
 }
@@ -64,12 +64,13 @@ async function writeToSheet(components, fileUrl) {
   await sheet.clear();
   await sheet.setHeaderRow(['Файл', 'Страница', 'Компонент', 'Теги', 'Ссылка']);
 
+  const fileKey = fileUrl.match(/file\/([a-zA-Z0-9]+)/)[1];
   const rows = components.map(c => ({
     Файл: fileUrl,
     Страница: c.page,
     Компонент: c.name,
     Теги: c.tags,
-    Ссылка: `https://www.figma.com/file/${fileUrl.match(/file\/([a-zA-Z0-9]+)/)[1]}/?node-id=${c.id}`
+    Ссылка: `https://www.figma.com/file/${fileKey}/?node-id=${c.id}`
   }));
 
   await sheet.addRows(rows);
@@ -85,7 +86,7 @@ async function writeToSheet(components, fileUrl) {
     for (const file of files) {
       console.log(`🔍 Обработка файла: ${file.url}`);
       const data = await getFullFileStructure(file.key);
-      const components = extractComponentsWithTags(data.document);
+      const components = extractNodesWithTags(data.document);
       console.log(`   Найдено компонентов с тегами: ${components.length}`);
 
       if (components.length > 0) {

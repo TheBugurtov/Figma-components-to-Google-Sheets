@@ -43,70 +43,48 @@ async function getFullFileStructure(fileKey) {
   return await response.json();
 }
 
-async function getAllComponents(fileKey) {
-  await delay(CONFIG.REQUEST_DELAY);
-  const response = await fetch(`https://api.figma.com/v1/files/${fileKey}/components`, {
-    headers: { 'X-FIGMA-TOKEN': CONFIG.FIGMA_TOKEN }
-  });
-  if (!response.ok) throw new Error(`Ошибка получения компонентов: ${response.status}`);
-  return await response.json();
-}
+function extractComponentsFromTree(node, path = [], components = []) {
+  const currentPath = [...path, node.name || ''];
 
-async function getNodePath(fileKey, nodeId) {
-  await delay(CONFIG.REQUEST_DELAY);
-  const response = await fetch(
-    `https://api.figma.com/v1/files/${fileKey}/nodes?ids=${nodeId}`,
-    { headers: { 'X-FIGMA-TOKEN': CONFIG.FIGMA_TOKEN } }
-  );
-  if (!response.ok) throw new Error(`Ошибка получения пути: ${response.status}`);
-  const data = await response.json();
-  return data.nodes[nodeId]?.document?.parent?.name || 'Unknown';
+  if (node.type === 'COMPONENT' || node.type === 'COMPONENT_SET') {
+    const tags = (node.description?.match(/#(\w+)/g) || []).map(t => t.slice(1));
+    if (tags.length > 0) {
+      components.push({
+        id: node.id,
+        name: node.name || 'Без имени',
+        tags,
+        description: node.description,
+        page: path[0] || 'Unknown',
+        fullPath: currentPath.join(' / ')
+      });
+    }
+  }
+
+  if (node.children) {
+    for (const child of node.children) {
+      extractComponentsFromTree(child, currentPath, components);
+    }
+  }
+
+  return components;
 }
 
 async function processFigmaFile(file) {
   console.log(`\n🔍 Обрабатываем файл: ${file.name}`);
-  
+
   try {
-    // 1. Получаем полную структуру файла
     const fileStructure = await getFullFileStructure(file.key);
-    const pages = fileStructure.document.children.map(page => ({
-      id: page.id,
-      name: page.name
+    const documentRoot = fileStructure.document;
+
+    const components = extractComponentsFromTree(documentRoot);
+
+    console.log(`   Всего компонентов с тегами: ${components.length}`);
+
+    return components.slice(0, CONFIG.MAX_COMPONENTS).map(comp => ({
+      ...comp,
+      file: file.name,
+      link: `https://www.figma.com/file/${file.key}/?node-id=${comp.id}`
     }));
-
-    // 2. Получаем все компоненты
-    const { meta } = await getAllComponents(file.key);
-    if (!meta?.components) return [];
-    
-    console.log(`   Всего компонентов в файле: ${meta.components.length}`);
-    
-    // 3. Фильтруем компоненты с тегами
-    const componentsWithTags = meta.components
-      .filter(comp => comp.description?.match(/#\w+/))
-      .slice(0, CONFIG.MAX_COMPONENTS);
-    
-    console.log(`   Компонентов с тегами: ${componentsWithTags.length}`);
-    
-    if (componentsWithTags.length === 0) return [];
-    
-    // 4. Получаем информацию о страницах для каждого компонента
-    const results = [];
-    for (const comp of componentsWithTags) {
-      const pageName = await getNodePath(file.key, comp.node_id);
-      results.push({
-        id: comp.node_id,
-        name: comp.name,
-        tags: (comp.description.match(/#(\w+)/g) || [])
-               .map(t => t.substring(1))
-               .join('\n'),
-        description: comp.description,
-        file: file.name,
-        page: pageName,
-        link: `https://www.figma.com/file/${file.key}/?node-id=${comp.node_id}`
-      });
-    }
-
-    return results;
 
   } catch (error) {
     console.error(`Ошибка обработки файла ${file.name}:`, error);
@@ -123,12 +101,13 @@ async function updateGoogleSheets(components) {
   const sheets = google.sheets({ version: 'v4', auth });
 
   const rows = [
-    ['Файл', 'Страница', 'Компонент', 'Теги', 'Ссылка'],
+    ['Файл', 'Страница', 'Компонент', 'Теги', 'Путь', 'Ссылка'],
     ...components.map(comp => [
       comp.file,
       comp.page,
       comp.name,
-      comp.tags,
+      comp.tags.join('\n'),
+      comp.fullPath,
       comp.link
     ])
   ];
@@ -155,7 +134,7 @@ async function updateGoogleSheets(components) {
               sheetId: 0,
               startRowIndex: 1,
               startColumnIndex: 3,
-              endColumnIndex: 4
+              endColumnIndex: 5
             },
             cell: {
               userEnteredFormat: {

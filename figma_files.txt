@@ -1,2 +1,2 @@
-# Добавьте ссылки на Figma файлы (по одной в строке)
-https://www.figma.com/design/7V4UQ61IVRxGArYZ20n7MH/App-Components?node-id=185721-2644&p=f&t=5L8u7cBdQrLriJKr-0
+# Добавьте ссылки на Figma файлы (по одной в строке, без node-id)
+https://www.figma.com/file/7V4UQ61IVRxGArYZ20n7MH/App-Components

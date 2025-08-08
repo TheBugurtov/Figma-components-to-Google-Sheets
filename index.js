@@ -27,12 +27,13 @@ async function fetchFileTree(fileKey) {
 }
 
 function extractTagsFromDescription(name, description) {
-  const source = `${name} ${description || ''}`;
+  const source = `${name || ''} ${description || ''}`;
   if (!source.includes('#')) return null;
   const tags = source
     .split(/\s+/)
     .filter((tag) => tag.startsWith('#'))
-    .map((tag) => tag.slice(1));
+    .map((tag) => tag.slice(1).trim())
+    .filter((tag) => tag.length > 0);
 
   return tags.length > 0 ? tags : null;
 }

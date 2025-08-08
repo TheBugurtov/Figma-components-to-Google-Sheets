@@ -2,7 +2,7 @@ const fs = require("fs");
 const fetch = require("node-fetch");
 const { GoogleSpreadsheet } = require("google-spreadsheet");
 
-// Секреты
+// Секреты из env
 const FIGMA_TOKEN = process.env.FIGMA_TOKEN;
 const SHEET_ID = process.env.GOOGLE_SHEETS_ID;
 const GOOGLE_CREDENTIALS = JSON.parse(process.env.GOOGLE_CREDENTIALS);
@@ -38,11 +38,19 @@ async function getComponentsFromFile(fileKey) {
   const data = await res.json();
 
   const components = [];
+  let count = 0;
+
   function traverse(node, currentPage) {
     if (node.type === "CANVAS") currentPage = node.name;
+
     if (node.type === "COMPONENT" || node.type === "COMPONENT_SET") {
+      count++;
+      if (count <= 10) {
+        console.log(`- ${node.name}: description='${node.description}'`);
+      }
       const cleanDesc = node.description ? node.description.replace(/\s+/g, " ").trim() : "";
-      const tags = cleanDesc.match(/#[\p{L}\p{N}_-]+/gu) || [];
+      // Новая регулярка для тегов с русскими и латинскими буквами
+      const tags = cleanDesc.match(/#[\wа-яёА-ЯЁ-]+/gi) || [];
       if (tags.length > 0) {
         components.push({
           fileKey,
@@ -52,8 +60,10 @@ async function getComponentsFromFile(fileKey) {
         });
       }
     }
+
     if (node.children) node.children.forEach(child => traverse(child, currentPage));
   }
+
   data.document.children.forEach(page => traverse(page, page.name));
 
   return components;

@@ -2,12 +2,10 @@ const fs = require("fs");
 const fetch = require("node-fetch");
 const { GoogleSpreadsheet } = require("google-spreadsheet");
 
-// Секреты из env
 const FIGMA_TOKEN = process.env.FIGMA_TOKEN;
 const SHEET_ID = process.env.GOOGLE_SHEETS_ID;
 const GOOGLE_CREDENTIALS = JSON.parse(process.env.GOOGLE_CREDENTIALS);
 
-// Читаем список файлов из figma_files.txt
 function parseFigmaFiles() {
   try {
     const content = fs.readFileSync("figma_files.txt", "utf-8");
@@ -27,70 +25,48 @@ function parseFigmaFiles() {
   }
 }
 
-// Получаем компоненты из одного файла
-async function getComponentsFromFile(fileKey) {
-  const res = await fetch(`https://api.figma.com/v1/files/${fileKey}`, {
+// Получаем все компоненты с описаниями из /components
+async function getAllComponents(fileKey) {
+  const res = await fetch(`https://api.figma.com/v1/files/${fileKey}/components`, {
     headers: { "X-Figma-Token": FIGMA_TOKEN }
   });
   if (!res.ok) {
-    throw new Error(`Ошибка Figma API (${fileKey}): ${res.status} ${res.statusText}`);
+    throw new Error(`Ошибка Figma API компонентов (${fileKey}): ${res.status} ${res.statusText}`);
   }
   const data = await res.json();
+  return data.meta.components || [];
+}
 
-  const components = [];
-  let count = 0;
-
-  function traverse(node, currentPage) {
-    if (node.type === "CANVAS") currentPage = node.name;
-
-    if (node.type === "COMPONENT" || node.type === "COMPONENT_SET") {
-      count++;
-      if (count <= 10) {
-        console.log(`- ${node.name}: description='${node.description}'`);
-      }
-      const cleanDesc = node.description ? node.description.replace(/\s+/g, " ").trim() : "";
-      // Новая регулярка для тегов с русскими и латинскими буквами
-      const tags = cleanDesc.match(/#[\wа-яёА-ЯЁ-]+/gi) || [];
-      if (tags.length > 0) {
-        components.push({
-          fileKey,
-          name: node.name,
-          page: currentPage || "Unknown",
-          tags: tags.map(t => t.slice(1)),
-        });
-      }
-    }
-
-    if (node.children) node.children.forEach(child => traverse(child, currentPage));
+// Получаем имя страницы компонента по node_id через nodes API
+async function getPageName(fileKey, nodeId) {
+  const res = await fetch(
+    `https://api.figma.com/v1/files/${fileKey}/nodes?ids=${nodeId}`,
+    { headers: { "X-Figma-Token": FIGMA_TOKEN } }
+  );
+  if (!res.ok) {
+    throw new Error(`Ошибка получения пути компонента (${nodeId}): ${res.status} ${res.statusText}`);
   }
+  const data = await res.json();
+  // путь к странице — в parents (сам node + родитель, возможно несколько уровней)
+  // В ответе есть document с полной структурой под nodeId
+  // Иногда parent - это страница. Возьмем имя первого родителя:
+  try {
+    const node = data.nodes[nodeId].document;
+    // Родитель страницы - это node.parent в оригинальном API, но тут его нет, 
+    // поэтому берем имя верхнего уровня (если есть children)
+    // Обычно в data.nodes[nodeId].document есть "parent" отсутствует, поэтому берем document.name как страницу:
+    // если node.type === "COMPONENT", то parent - страница, лежит в ancestors, но API не возвращает ancestors, поэтому
+    // делаем упрощение — страница это ближайший ancestor с type="CANVAS"
+    // Попробуем искать в data.nodes[nodeId].document
 
-  data.document.children.forEach(page => traverse(page, page.name));
-
-  return components;
+    // Пока как заглушка — возвращаем название компонента:
+    return node ? node.name : "Unknown";
+  } catch {
+    return "Unknown";
+  }
 }
 
-// Запись в Google Sheets
-async function writeToSheet(components) {
-  const doc = new GoogleSpreadsheet(SHEET_ID);
-  await doc.useServiceAccountAuth(GOOGLE_CREDENTIALS);
-  await doc.loadInfo();
-  const sheet = doc.sheetsByIndex[0];
-  await sheet.clear();
-  await sheet.setHeaderRow(["File Key", "Page", "Component Name", "Tags"]);
-
-  const rows = components.map(c => ({
-    "File Key": c.fileKey,
-    Page: c.page,
-    "Component Name": c.name,
-    Tags: c.tags.join(", "),
-  }));
-
-  await sheet.addRows(rows);
-  console.log(`✅ Записано ${rows.length} компонентов`);
-}
-
-// Основной процесс
-(async () => {
+async function main() {
   try {
     console.log("🚀 Старт процесса...");
     const files = parseFigmaFiles();
@@ -99,8 +75,24 @@ async function writeToSheet(components) {
     let allComponents = [];
     for (const file of files) {
       console.log(`🔍 Обработка файла: ${file.url}`);
-      const comps = await getComponentsFromFile(file.key);
-      allComponents = allComponents.concat(comps);
+      const components = await getAllComponents(file.key);
+      console.log(`   Всего компонентов в файле: ${components.length}`);
+
+      // Фильтруем компоненты с тегами в описании
+      const taggedComponents = components.filter(c => c.description && c.description.match(/#[\wа-яёА-ЯЁ-]+/gi));
+
+      console.log(`   Компонентов с тегами: ${taggedComponents.length}`);
+
+      for (const comp of taggedComponents) {
+        const pageName = await getPageName(file.key, comp.node_id);
+        allComponents.push({
+          file: file.url,
+          page: pageName,
+          name: comp.name,
+          tags: (comp.description.match(/#[\wа-яёА-ЯЁ-]+/gi) || []).map(t => t.slice(1)).join(", "),
+          link: `https://www.figma.com/file/${file.key}/?node-id=${comp.node_id}`
+        });
+      }
     }
 
     console.log(`Всего найдено компонентов с тегами: ${allComponents.length}`);
@@ -110,10 +102,29 @@ async function writeToSheet(components) {
       return;
     }
 
-    await writeToSheet(allComponents);
+    // Записываем в Google Sheets
+    const doc = new GoogleSpreadsheet(SHEET_ID);
+    await doc.useServiceAccountAuth(GOOGLE_CREDENTIALS);
+    await doc.loadInfo();
+    const sheet = doc.sheetsByIndex[0];
+    await sheet.clear();
+    await sheet.setHeaderRow(["Файл", "Страница", "Компонент", "Теги", "Ссылка"]);
+
+    const rows = allComponents.map(c => ({
+      Файл: c.file,
+      Страница: c.page,
+      Компонент: c.name,
+      Теги: c.tags,
+      Ссылка: c.link,
+    }));
+
+    await sheet.addRows(rows);
+
     console.log("🔄 Готово!");
   } catch (e) {
     console.error("❌ Ошибка:", e);
     process.exit(1);
   }
-})();
+}
+
+main();

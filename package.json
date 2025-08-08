@@ -4,6 +4,6 @@
   "main": "index.js",
   "dependencies": {
     "node-fetch": "^2.6.7",
-    "googleapis": "^92.0.0"
+    "google-spreadsheet": "^3.3.0"
   }
 }

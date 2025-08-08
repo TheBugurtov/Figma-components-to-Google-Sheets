@@ -1,113 +1,114 @@
 // index.js
 
-const fs = require("fs");
-const fetch = require("node-fetch");
-const { google } = require("googleapis");
+import fetch from 'node-fetch';
+import fs from 'fs/promises';
+import { google } from 'googleapis';
+import path from 'path';
+import process from 'process';
 
 const FIGMA_TOKEN = process.env.FIGMA_TOKEN;
 const GOOGLE_SHEETS_ID = process.env.GOOGLE_SHEETS_ID;
 const GOOGLE_CREDENTIALS = JSON.parse(process.env.GOOGLE_CREDENTIALS);
-const FIGMA_FILES_LIST_PATH = "figma_files.txt";
+const FIGMA_FILES_LIST_PATH = './figma_files.txt';
 
-const sheets = google.sheets("v4");
 const auth = new google.auth.GoogleAuth({
   credentials: GOOGLE_CREDENTIALS,
-  scopes: ["https://www.googleapis.com/auth/spreadsheets"],
+  scopes: ['https://www.googleapis.com/auth/spreadsheets'],
 });
 
-async function getFullFileStructure(fileKey) {
+const sheets = google.sheets({ version: 'v4', auth });
+
+async function getFigmaFile(fileKey) {
   const res = await fetch(`https://api.figma.com/v1/files/${fileKey}`, {
-    headers: { Authorization: `Bearer ${FIGMA_TOKEN}` },
+    headers: { 'X-Figma-Token': FIGMA_TOKEN },
   });
-  if (!res.ok) throw new Error("Ошибка загрузки Figma-файла: " + res.statusText);
-  const data = await res.json();
-  return data.document;
+  if (!res.ok) throw new Error(`Ошибка загрузки Figma-файла: ${res.statusText}`);
+  return res.json();
 }
 
-function extractComponentsWithTags(node, path = []) {
-  let components = [];
-
-  if (node.type === "COMPONENT" || node.type === "COMPONENT_SET") {
-    const desc = node.description || "";
-    const tags = desc.match(/#\S+/g);
-    console.debug(`[DEBUG] ${[...path, node.name].join(" / ")} — description: ${desc}`);
-    if (tags && tags.length > 0) {
-      components.push({
-        name: node.name,
-        description: desc,
-        tags: tags.map((t) => t.replace("#", "")),
-        path: [...path, node.name].join(" / "),
-      });
-    }
+function extractTaggedComponents(node, result = []) {
+  if ((node.type === 'COMPONENT' || node.type === 'COMPONENT_SET') && typeof node.description === 'string' && node.description.includes('#')) {
+    const tags = node.description
+      .split(/\s+/)
+      .filter((tag) => tag.startsWith('#'))
+      .map((tag) => tag.slice(1));
+    result.push({
+      name: node.name,
+      description: node.description,
+      tags: tags.join(', '),
+    });
   }
 
   if (node.children) {
-    for (const child of node.children) {
-      components = components.concat(extractComponentsWithTags(child, [...path, node.name]));
-    }
+    node.children.forEach((child) => extractTaggedComponents(child, result));
   }
-
-  return components;
+  return result;
 }
 
-async function writeToSheet(components) {
-  const client = await auth.getClient();
-  const rows = components.map((c) => [c.name, c.path, c.tags.join(", "), c.description]);
-  rows.unshift(["Название", "Путь", "Теги", "Описание"]);
-
-  await sheets.spreadsheets.values.update({
-    auth: client,
-    spreadsheetId: GOOGLE_SHEETS_ID,
-    range: "Компоненты!A1",
-    valueInputOption: "RAW",
-    requestBody: { values: rows },
-  });
-}
-
-async function processFigmaFile(fileUrl) {
+async function processFigmaFile(nameAndKey) {
   try {
-    const fileKey = fileUrl.split("/file/")[1].split("/")[0];
-    console.log(`🔍 Обрабатываем файл: ${fileKey}`);
-    const document = await getFullFileStructure(fileKey);
-
-    const pages = document.children || [];
+    const [name, fileKey] = nameAndKey.split(',').map((s) => s.trim());
+    console.log(`\n🔍 Обрабатываем файл: ${name}`);
+    const file = await getFigmaFile(fileKey);
+    const pages = file.document.children;
     console.log(`   Найдено страниц: ${pages.length}`);
 
-    let allComponents = [];
+    const allTaggedComponents = [];
     for (const page of pages) {
-      const components = extractComponentsWithTags(page, [page.name]);
-      allComponents = allComponents.concat(components);
+      const components = extractTaggedComponents(page);
+      components.forEach((c) => console.debug(`[DEBUG] ${c.name} — description: ${c.description}`));
+      allTaggedComponents.push(...components);
     }
 
-    console.log(`   Всего компонентов с тегами: ${allComponents.length}`);
-    return allComponents;
+    console.log(`   Всего компонентов с тегами: ${allTaggedComponents.length}`);
+    return allTaggedComponents;
   } catch (error) {
-    console.error(`Ошибка обработки файла ${fileUrl}:`, error);
+    console.error(`Ошибка обработки файла ${nameAndKey}:`, error);
     return [];
   }
 }
 
-async function main() {
-  console.log("🚀 Запуск процесса...");
+async function writeToGoogleSheet(rows) {
+  const values = [
+    ['Component Name', 'Description', 'Tags'],
+    ...rows.map((c) => [c.name, c.description, c.tags]),
+  ];
 
-  const fileUrls = fs
-    .readFileSync(FIGMA_FILES_LIST_PATH, "utf8")
-    .split("\n")
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: GOOGLE_SHEETS_ID,
+    range: 'FigmaComponents!A1',
+    valueInputOption: 'RAW',
+    requestBody: { values },
+  });
+
+  console.log('✅ Данные успешно записаны в Google Sheets');
+}
+
+async function main() {
+  console.log('🚀 Запуск процесса...');
+  const file = await fs.readFile(FIGMA_FILES_LIST_PATH, 'utf-8');
+  const figmaFiles = file
+    .split('\n')
     .map((line) => line.trim())
-    .filter((line) => line.length > 0 && !line.startsWith("#"));
+    .filter((line) => line && !line.startsWith('#'))
+    .map((line) => {
+      const match = line.match(/https:\/\/www\.figma\.com\/file\/([\w\d]+)(?:\/([\w-]+))?/);
+      if (match) return [`${match[2] || 'Figma File'}`, match[1]].join(',');
+      return null;
+    })
+    .filter(Boolean);
 
   let allComponents = [];
-  for (const fileUrl of fileUrls) {
-    const components = await processFigmaFile(fileUrl);
-    allComponents = allComponents.concat(components);
+  for (const file of figmaFiles) {
+    const components = await processFigmaFile(file);
+    allComponents.push(...components);
   }
 
   if (allComponents.length === 0) {
     console.log(`ℹ️ Компоненты с тегами не найдены. Проверьте:\n1. Наличие тегов (#tag) в описании компонентов\n2. Права доступа токена к файлу`);
   } else {
-    await writeToSheet(allComponents);
-    console.log(`✅ Загружено компонентов: ${allComponents.length}`);
+    await writeToGoogleSheet(allComponents);
   }
 }
 
-main().catch((err) => console.error("Необработанная ошибка:", err));
+main();

@@ -76,7 +76,13 @@ async function processFigmaFile(file) {
     const fileStructure = await getFullFileStructure(file.key);
     const documentRoot = fileStructure.document;
 
-    const components = extractComponentsFromTree(documentRoot);
+    let components = [];
+    const pages = documentRoot.children || [];
+    console.log(`   Найдено страниц: ${pages.length}`);
+
+    for (const page of pages) {
+      components = components.concat(extractComponentsFromTree(page, [page.name]));
+    }
 
     console.log(`   Всего компонентов с тегами: ${components.length}`);
 

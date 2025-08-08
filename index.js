@@ -18,54 +18,49 @@ const auth = new google.auth.GoogleAuth({
 
 const sheets = google.sheets({ version: 'v4', auth });
 
-async function getFigmaFile(fileKey) {
-  const res = await fetch(`https://api.figma.com/v1/files/${fileKey}`, {
+async function getFigmaComponents(fileKey) {
+  const res = await fetch(`https://api.figma.com/v1/files/${fileKey}/components`, {
     headers: { 'X-Figma-Token': FIGMA_TOKEN },
   });
-  if (!res.ok) throw new Error(`Ошибка загрузки Figma-файла: ${res.statusText}`);
+  if (!res.ok) throw new Error(`Ошибка загрузки компонентов Figma-файла: ${res.statusText}`);
   return res.json();
 }
 
-function extractTaggedComponents(node, result = []) {
-  const source = `${node.name} ${node.description || ''}`;
-  const hasTag = source.includes('#');
+function extractTagsFromDescription(name, description) {
+  const source = `${name} ${description || ''}`;
+  if (!source.includes('#')) return null;
+  const tags = source
+    .split(/\s+/)
+    .filter((tag) => tag.startsWith('#'))
+    .map((tag) => tag.slice(1));
 
-  if ((node.type === 'COMPONENT' || node.type === 'COMPONENT_SET') && hasTag) {
-    const tags = source
-      .split(/\s+/)
-      .filter((tag) => tag.startsWith('#'))
-      .map((tag) => tag.slice(1));
-
-    result.push({
-      name: node.name,
-      description: node.description || '',
-      tags: tags.join(', '),
-    });
-  }
-
-  if (node.children) {
-    node.children.forEach((child) => extractTaggedComponents(child, result));
-  }
-  return result;
+  return tags.length > 0 ? tags : null;
 }
 
 async function processFigmaFile(nameAndKey) {
   try {
     const [name, fileKey] = nameAndKey.split(',').map((s) => s.trim());
     console.log(`\n🔍 Обрабатываем файл: ${name}`);
-    const file = await getFigmaFile(fileKey);
-    const pages = file.document.children;
-    console.log(`   Найдено страниц: ${pages.length}`);
 
-    const allTaggedComponents = [];
-    for (const page of pages) {
-      const components = extractTaggedComponents(page);
-      components.forEach((c) => console.debug(`[DEBUG] ${c.name} — description: ${c.description}`));
-      allTaggedComponents.push(...components);
+    const data = await getFigmaComponents(fileKey);
+    const components = Object.values(data.meta.components);
+    console.log(`   Найдено компонентов: ${components.length}`);
+
+    const taggedComponents = [];
+    for (const comp of components) {
+      const tags = extractTagsFromDescription(comp.name, comp.description);
+      console.debug(`[DEBUG] ${comp.name} — description: ${comp.description}`);
+      if (tags) {
+        taggedComponents.push({
+          name: comp.name,
+          description: comp.description || '',
+          tags: tags.join(', '),
+        });
+      }
     }
 
-    console.log(`   Всего компонентов с тегами: ${allTaggedComponents.length}`);
-    return allTaggedComponents;
+    console.log(`   Всего компонентов с тегами: ${taggedComponents.length}`);
+    return taggedComponents;
   } catch (error) {
     console.error(`Ошибка обработки файла ${nameAndKey}:`, error);
     return [];

@@ -34,7 +34,16 @@ function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function getFileComponents(fileKey) {
+async function getFullFileStructure(fileKey) {
+  await delay(CONFIG.REQUEST_DELAY);
+  const response = await fetch(`https://api.figma.com/v1/files/${fileKey}`, {
+    headers: { 'X-FIGMA-TOKEN': CONFIG.FIGMA_TOKEN }
+  });
+  if (!response.ok) throw new Error(`Ошибка загрузки файла: ${response.status}`);
+  return await response.json();
+}
+
+async function getAllComponents(fileKey) {
   await delay(CONFIG.REQUEST_DELAY);
   const response = await fetch(`https://api.figma.com/v1/files/${fileKey}/components`, {
     headers: { 'X-FIGMA-TOKEN': CONFIG.FIGMA_TOKEN }
@@ -43,27 +52,35 @@ async function getFileComponents(fileKey) {
   return await response.json();
 }
 
-async function getComponentsDetails(fileKey, componentIds) {
+async function getNodePath(fileKey, nodeId) {
   await delay(CONFIG.REQUEST_DELAY);
   const response = await fetch(
-    `https://api.figma.com/v1/files/${fileKey}/nodes?ids=${componentIds.join(',')}`,
+    `https://api.figma.com/v1/files/${fileKey}/nodes?ids=${nodeId}`,
     { headers: { 'X-FIGMA-TOKEN': CONFIG.FIGMA_TOKEN } }
   );
-  if (!response.ok) throw new Error(`Ошибка получения деталей: ${response.status}`);
-  return await response.json();
+  if (!response.ok) throw new Error(`Ошибка получения пути: ${response.status}`);
+  const data = await response.json();
+  return data.nodes[nodeId]?.document?.parent?.name || 'Unknown';
 }
 
 async function processFigmaFile(file) {
   console.log(`\n🔍 Обрабатываем файл: ${file.name}`);
   
   try {
-    // 1. Получаем все компоненты файла
-    const { meta } = await getFileComponents(file.key);
+    // 1. Получаем полную структуру файла
+    const fileStructure = await getFullFileStructure(file.key);
+    const pages = fileStructure.document.children.map(page => ({
+      id: page.id,
+      name: page.name
+    }));
+
+    // 2. Получаем все компоненты
+    const { meta } = await getAllComponents(file.key);
     if (!meta?.components) return [];
     
     console.log(`   Всего компонентов в файле: ${meta.components.length}`);
     
-    // 2. Фильтруем компоненты с тегами
+    // 3. Фильтруем компоненты с тегами
     const componentsWithTags = meta.components
       .filter(comp => comp.description?.match(/#\w+/))
       .slice(0, CONFIG.MAX_COMPONENTS);
@@ -72,26 +89,24 @@ async function processFigmaFile(file) {
     
     if (componentsWithTags.length === 0) return [];
     
-    // 3. Получаем детали компонентов (без запроса usage)
-    const componentIds = componentsWithTags.map(comp => comp.node_id);
-    const { nodes } = await getComponentsDetails(file.key, componentIds);
-    
-    // 4. Формируем результат
-    return componentsWithTags.map(comp => {
-      const node = nodes[comp.node_id]?.document;
-      
-      return {
+    // 4. Получаем информацию о страницах для каждого компонента
+    const results = [];
+    for (const comp of componentsWithTags) {
+      const pageName = await getNodePath(file.key, comp.node_id);
+      results.push({
         id: comp.node_id,
-        name: node?.name || comp.name,
+        name: comp.name,
         tags: (comp.description.match(/#(\w+)/g) || [])
                .map(t => t.substring(1))
                .join('\n'),
         description: comp.description,
         file: file.name,
-        page: node?.parent?.name || 'Unknown',
+        page: pageName,
         link: `https://www.figma.com/file/${file.key}/?node-id=${comp.node_id}`
-      };
-    });
+      });
+    }
+
+    return results;
 
   } catch (error) {
     console.error(`Ошибка обработки файла ${file.name}:`, error);

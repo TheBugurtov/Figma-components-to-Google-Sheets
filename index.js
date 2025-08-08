@@ -1,10 +1,10 @@
-// index.js
+// index.js (CommonJS)
 
-import fetch from 'node-fetch';
-import fs from 'fs/promises';
-import { google } from 'googleapis';
-import path from 'path';
-import process from 'process';
+const fetch = require('node-fetch');
+const fs = require('fs/promises');
+const { google } = require('googleapis');
+const path = require('path');
+const process = require('process');
 
 const FIGMA_TOKEN = process.env.FIGMA_TOKEN;
 const GOOGLE_SHEETS_ID = process.env.GOOGLE_SHEETS_ID;

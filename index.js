@@ -18,11 +18,11 @@ const auth = new google.auth.GoogleAuth({
 
 const sheets = google.sheets({ version: 'v4', auth });
 
-async function getFigmaComponents(fileKey) {
-  const res = await fetch(`https://api.figma.com/v1/files/${fileKey}/components`, {
+async function fetchFileTree(fileKey) {
+  const res = await fetch(`https://api.figma.com/v1/files/${fileKey}`, {
     headers: { 'X-Figma-Token': FIGMA_TOKEN },
   });
-  if (!res.ok) throw new Error(`Ошибка загрузки компонентов Figma-файла: ${res.statusText}`);
+  if (!res.ok) throw new Error(`Ошибка загрузки дерева Figma-файла: ${res.statusText}`);
   return res.json();
 }
 
@@ -37,13 +37,25 @@ function extractTagsFromDescription(name, description) {
   return tags.length > 0 ? tags : null;
 }
 
+function walkTree(node, result = []) {
+  if (node.type === 'COMPONENT' || node.type === 'COMPONENT_SET') {
+    result.push(node);
+  }
+  if (node.children) {
+    for (const child of node.children) {
+      walkTree(child, result);
+    }
+  }
+  return result;
+}
+
 async function processFigmaFile(nameAndKey) {
   try {
     const [name, fileKey] = nameAndKey.split(',').map((s) => s.trim());
     console.log(`\n🔍 Обрабатываем файл: ${name}`);
 
-    const data = await getFigmaComponents(fileKey);
-    const components = Object.values(data.meta.components);
+    const data = await fetchFileTree(fileKey);
+    const components = walkTree(data.document);
     console.log(`   Найдено компонентов: ${components.length}`);
 
     const taggedComponents = [];

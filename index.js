@@ -11,7 +11,6 @@ const CONFIG = {
   REQUEST_DELAY: 500
 };
 
-// Извлекаем ключи и названия файлов
 function parseFigmaFiles() {
   try {
     const content = fs.readFileSync(CONFIG.FILES_LIST, 'utf-8');
@@ -31,12 +30,10 @@ function parseFigmaFiles() {
   }
 }
 
-// Задержка между запросами
 function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// Получаем все компоненты файла
 async function getFileComponents(fileKey) {
   await delay(CONFIG.REQUEST_DELAY);
   const response = await fetch(`https://api.figma.com/v1/files/${fileKey}/components`, {
@@ -46,18 +43,6 @@ async function getFileComponents(fileKey) {
   return await response.json();
 }
 
-// Получаем данные об использовании
-async function getComponentsUsage(fileKey, componentIds) {
-  await delay(CONFIG.REQUEST_DELAY);
-  const response = await fetch(
-    `https://api.figma.com/v1/files/${fileKey}/component_usages?ids=${componentIds.join(',')}`,
-    { headers: { 'X-FIGMA-TOKEN': CONFIG.FIGMA_TOKEN } }
-  );
-  if (!response.ok) throw new Error(`Ошибка получения использования: ${response.status}`);
-  return await response.json();
-}
-
-// Получаем детали компонентов
 async function getComponentsDetails(fileKey, componentIds) {
   await delay(CONFIG.REQUEST_DELAY);
   const response = await fetch(
@@ -74,40 +59,37 @@ async function processFigmaFile(file) {
   try {
     // 1. Получаем все компоненты файла
     const { meta } = await getFileComponents(file.key);
-    if (!meta || !meta.components) return [];
+    if (!meta?.components) return [];
     
     console.log(`   Всего компонентов в файле: ${meta.components.length}`);
     
     // 2. Фильтруем компоненты с тегами
-    const componentIds = meta.components
+    const componentsWithTags = meta.components
       .filter(comp => comp.description?.match(/#\w+/))
-      .map(comp => comp.node_id);
+      .slice(0, CONFIG.MAX_COMPONENTS);
     
-    console.log(`   Компонентов с тегами: ${componentIds.length}`);
+    console.log(`   Компонентов с тегами: ${componentsWithTags.length}`);
     
-    if (componentIds.length === 0) return [];
+    if (componentsWithTags.length === 0) return [];
     
-    // 3. Получаем данные об использовании
-    const usageData = await getComponentsUsage(file.key, componentIds);
-    
-    // 4. Получаем детали компонентов
+    // 3. Получаем детали компонентов (без запроса usage)
+    const componentIds = componentsWithTags.map(comp => comp.node_id);
     const { nodes } = await getComponentsDetails(file.key, componentIds);
     
-    // 5. Формируем результат
-    return componentIds.map(id => {
-      const comp = meta.components.find(c => c.node_id === id);
-      const node = nodes[id]?.document;
+    // 4. Формируем результат
+    return componentsWithTags.map(comp => {
+      const node = nodes[comp.node_id]?.document;
       
       return {
-        id: id,
+        id: comp.node_id,
         name: node?.name || comp.name,
         tags: (comp.description.match(/#(\w+)/g) || [])
                .map(t => t.substring(1))
                .join('\n'),
         description: comp.description,
-        instances_count: usageData.meta[id]?.instances_count || 0,
         file: file.name,
-        page: node?.parent?.name || 'Unknown'
+        page: node?.parent?.name || 'Unknown',
+        link: `https://www.figma.com/file/${file.key}/?node-id=${comp.node_id}`
       };
     });
 
@@ -125,20 +107,17 @@ async function updateGoogleSheets(components) {
 
   const sheets = google.sheets({ version: 'v4', auth });
 
-  // Подготовка данных
   const rows = [
-    ['Файл', 'Страница', 'Компонент', 'Теги', 'Использований', 'Ссылка'],
+    ['Файл', 'Страница', 'Компонент', 'Теги', 'Ссылка'],
     ...components.map(comp => [
       comp.file,
       comp.page,
       comp.name,
       comp.tags,
-      comp.instances_count,
-      `https://www.figma.com/file/${comp.file.key}/?node-id=${comp.id}`
+      comp.link
     ])
   ];
 
-  // Очистка и запись
   await sheets.spreadsheets.values.clear({
     spreadsheetId: CONFIG.GOOGLE_SHEETS_ID,
     range: 'A1:Z10000'
@@ -151,7 +130,6 @@ async function updateGoogleSheets(components) {
     resource: { values: rows }
   });
 
-  // Настройка форматирования
   await sheets.spreadsheets.batchUpdate({
     spreadsheetId: CONFIG.GOOGLE_SHEETS_ID,
     resource: {

@@ -27,14 +27,18 @@ async function getFigmaFile(fileKey) {
 }
 
 function extractTaggedComponents(node, result = []) {
-  if ((node.type === 'COMPONENT' || node.type === 'COMPONENT_SET') && typeof node.description === 'string' && node.description.includes('#')) {
-    const tags = node.description
+  const source = `${node.name} ${node.description || ''}`;
+  const hasTag = source.includes('#');
+
+  if ((node.type === 'COMPONENT' || node.type === 'COMPONENT_SET') && hasTag) {
+    const tags = source
       .split(/\s+/)
       .filter((tag) => tag.startsWith('#'))
       .map((tag) => tag.slice(1));
+
     result.push({
       name: node.name,
-      description: node.description,
+      description: node.description || '',
       tags: tags.join(', '),
     });
   }

@@ -1,9 +1,6 @@
-// index.js (CommonJS)
-
 const fetch = require('node-fetch');
 const fs = require('fs/promises');
 const { google } = require('googleapis');
-const path = require('path');
 const process = require('process');
 
 const FIGMA_TOKEN = process.env.FIGMA_TOKEN;
@@ -59,9 +56,15 @@ async function processFigmaFile(nameAndKey) {
     console.log(`   Найдено компонентов: ${components.length}`);
 
     const taggedComponents = [];
+
+    console.log(`   Всего компонентов для анализа: ${components.length}`);
+
     for (const comp of components) {
       const tags = extractTagsFromDescription(comp.name, comp.description);
-      console.debug(`[DEBUG] ${comp.name} — description: ${comp.description}`);
+      console.log(`[DEBUG] Компонент: "${comp.name}"`);
+      console.log(`        Описание: "${comp.description || ''}"`);
+      console.log(`        Теги: ${tags ? tags.join(', ') : '(нет тегов)'}`);
+
       if (tags) {
         taggedComponents.push({
           name: comp.name,

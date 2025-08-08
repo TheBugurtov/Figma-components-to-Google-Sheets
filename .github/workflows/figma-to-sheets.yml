@@ -2,8 +2,8 @@ name: Update Figma Components in Google Sheets
 
 on:
   schedule:
-    - cron: '0 12 * * *' # Ежедневно в 12:00 UTC
-  workflow_dispatch: # Позволяет запускать вручную
+    - cron: '0 12 * * *'
+  workflow_dispatch:
 
 jobs:
   update-sheets:
@@ -21,8 +21,12 @@ jobs:
     - name: Install dependencies
       run: npm install
       
+    - name: Verify files list
+      run: cat figma_files.txt
+      
     - name: Run script
       env:
         FIGMA_TOKEN: ${{ secrets.FIGMA_TOKEN }}
+        GOOGLE_SHEETS_ID: ${{ secrets.GOOGLE_SHEETS_ID }}
         GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
       run: node index.js

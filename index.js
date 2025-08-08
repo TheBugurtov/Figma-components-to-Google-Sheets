@@ -1,124 +1,97 @@
-import fetch from "node-fetch";
-import { GoogleSpreadsheet } from "google-spreadsheet";
-import { JWT } from "google-auth-library";
+// index.js — версия под твои secrets
 
-const CONFIG = {
-  FIGMA_TOKEN: process.env.FIGMA_TOKEN,
-  FILE_KEY: process.env.FIGMA_FILE_KEY,
-  SHEET_ID: process.env.SHEET_ID,
-  GOOGLE_CLIENT_EMAIL: process.env.GOOGLE_CLIENT_EMAIL,
-  GOOGLE_PRIVATE_KEY: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, "\n"),
-  REQUEST_DELAY: 200
-};
+const fetch = require("node-fetch");
+const { GoogleSpreadsheet } = require("google-spreadsheet");
 
-// ====== Вспомогательные функции ======
-const delay = ms => new Promise(res => setTimeout(res, ms));
+// Secrets
+const FIGMA_TOKEN = process.env.FIGMA_TOKEN;
+const FILE_KEY = process.env.FIGMA_FILE_KEY; // если нет — нужно добавить
+const SHEET_ID = process.env.GOOGLE_SHEETS_ID;
+const GOOGLE_CREDENTIALS = JSON.parse(process.env.GOOGLE_CREDENTIALS);
 
-// Получаем все компоненты с пагинацией
-async function getAllComponents(fileKey) {
-  let allComponents = [];
-  let cursor = null;
+// ==== Получаем данные из Figma ====
+async function getFigmaComponents() {
+  console.log("🚀 Запуск процесса...");
 
-  while (true) {
-    await delay(CONFIG.REQUEST_DELAY);
+  const res = await fetch(`https://api.figma.com/v1/files/${FILE_KEY}`, {
+    headers: { "X-Figma-Token": FIGMA_TOKEN },
+  });
 
-    const url = new URL(`https://api.figma.com/v1/files/${fileKey}/components`);
-    url.searchParams.set("page_size", 500);
-    if (cursor) url.searchParams.set("cursor", cursor);
-
-    const resp = await fetch(url, {
-      headers: { "X-FIGMA-TOKEN": CONFIG.FIGMA_TOKEN }
-    });
-    if (!resp.ok) throw new Error(`Ошибка API Figma: ${resp.status}`);
-    const data = await resp.json();
-
-    allComponents.push(...(data.meta?.components || []));
-    if (!data.meta?.cursor?.next_page) break;
-    cursor = data.meta.cursor.next_page;
+  if (!res.ok) {
+    throw new Error(`Ошибка Figma API: ${res.status} ${res.statusText}`);
   }
 
-  return allComponents;
-}
+  const data = await res.json();
 
-// Получаем карту nodeId → pageName
-async function getPageMap(fileKey) {
-  const resp = await fetch(`https://api.figma.com/v1/files/${fileKey}`, {
-    headers: { "X-FIGMA-TOKEN": CONFIG.FIGMA_TOKEN }
-  });
-  if (!resp.ok) throw new Error(`Ошибка получения файла: ${resp.status}`);
-  const data = await resp.json();
+  const components = [];
 
-  const pageMap = {};
-  for (const page of data.document.children) {
-    if (page.type === "CANVAS") {
-      pageMap[page.id] = page.name;
-      if (page.children) {
-        page.children.forEach(node => mapNodeToPage(node, page.name, pageMap));
+  function traverse(node, currentPage) {
+    if (node.type === "CANVAS") {
+      currentPage = node.name;
+    }
+
+    if (node.type === "COMPONENT" || node.type === "COMPONENT_SET") {
+      const cleanDesc = node.description
+        ? node.description.replace(/\s+/g, " ").trim()
+        : "";
+
+      const tags = cleanDesc.match(/#[\p{L}\p{N}_-]+/gu) || [];
+
+      if (tags.length > 0) {
+        components.push({
+          name: node.name,
+          page: currentPage || "Unknown",
+          tags: tags.map(t => t.replace("#", "")),
+        });
+      }
+    }
+
+    if (node.children) {
+      for (const child of node.children) {
+        traverse(child, currentPage);
       }
     }
   }
-  return pageMap;
-}
 
-function mapNodeToPage(node, pageName, pageMap) {
-  pageMap[node.id] = pageName;
-  if (node.children) {
-    node.children.forEach(child => mapNodeToPage(child, pageName, pageMap));
+  for (const page of data.document.children) {
+    traverse(page, page.name);
   }
+
+  console.log(`   Найдено компонентов с тегами: ${components.length}`);
+  return components;
 }
 
-// Парсим теги из description
-function extractTags(description) {
-  if (!description) return [];
-  const clean = description.replace(/\s+/g, " ").trim();
-  return clean.match(/#[\p{L}\p{N}_-]+/gu)?.map(t => t.slice(1)) || [];
-}
+// ==== Запись в Google Sheets ====
+async function writeToSheet(components) {
+  console.log("📝 Записываем данные в таблицу...");
 
-// ====== Основной процесс ======
-(async () => {
-  console.log("🚀 Запуск процесса...");
-
-  const [components, pageMap] = await Promise.all([
-    getAllComponents(CONFIG.FILE_KEY),
-    getPageMap(CONFIG.FILE_KEY)
-  ]);
-
-  console.log(`   Всего компонентов в файле: ${components.length}`);
-
-  const componentsWithTags = components
-    .map(c => ({
-      name: c.name,
-      page: pageMap[c.containing_frame?.page_id] || "Unknown",
-      tags: extractTags(c.description)
-    }))
-    .filter(c => c.tags.length > 0);
-
-  console.log(`   Компонентов с тегами: ${componentsWithTags.length}`);
-
-  // ===== Запись в Google Sheets =====
-  const serviceAccountAuth = new JWT({
-    email: CONFIG.GOOGLE_CLIENT_EMAIL,
-    key: CONFIG.GOOGLE_PRIVATE_KEY,
-    scopes: ["https://www.googleapis.com/auth/spreadsheets"]
-  });
-
-  const doc = new GoogleSpreadsheet(CONFIG.SHEET_ID, serviceAccountAuth);
+  const doc = new GoogleSpreadsheet(SHEET_ID);
+  await doc.useServiceAccountAuth(GOOGLE_CREDENTIALS);
   await doc.loadInfo();
+
   const sheet = doc.sheetsByIndex[0];
-
   await sheet.clear();
-  await sheet.setHeaderRow(["Page", "Component Name", "Tag"]);
+  await sheet.setHeaderRow(["Name", "Page", "Tags"]);
 
-  const rows = componentsWithTags.flatMap(c =>
-    c.tags.map(tag => ({
-      Page: c.page,
-      "Component Name": c.name,
-      Tag: tag
-    }))
-  );
+  const rows = components.map(c => ({
+    Name: c.name,
+    Page: c.page,
+    Tags: c.tags.join(", "),
+  }));
 
   await sheet.addRows(rows);
 
-  console.log("✅ Запись в Google Sheets завершена");
-  console.log(`🔗 Ссылка: https://docs.google.com/spreadsheets/d/${CONFIG.SHEET_ID}/edit`);
+  console.log(`✅ Записано ${rows.length} компонентов`);
+}
+
+// ==== Основной запуск ====
+(async () => {
+  try {
+    const components = await getFigmaComponents();
+    await writeToSheet(components);
+    console.log("🔄 Готово!");
+  } catch (err) {
+    console.error("❌ Ошибка:", err);
+    process.exit(1);
+  }
 })();

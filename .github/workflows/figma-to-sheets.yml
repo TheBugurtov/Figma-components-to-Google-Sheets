@@ -23,6 +23,12 @@ jobs:
       
     - name: Verify files list
       run: cat figma_files.txt
+
+    - name: Verify figma_files.txt
+      run: |
+        echo "Содержимое figma_files.txt:"
+        cat figma_files.txt
+        echo "Количество строк: $(wc -l figma_files.txt)"
       
     - name: Run script
       env:

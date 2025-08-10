@@ -1,6 +1,6 @@
-import fs from 'fs';
-import fetch from 'node-fetch';
-import { google } from 'googleapis';
+const fs = require('fs');
+const fetch = require('node-fetch');
+const { google } = require('googleapis');
 
 // ====== CONFIG ======
 const FIGMA_TOKEN = process.env.FIGMA_TOKEN;
@@ -45,7 +45,6 @@ async function walk(node, components = []) {
     let description = node.description || '';
 
     if (node.remote && node.mainComponent?.fileKey && node.mainComponent?.nodeId) {
-      // Загружаем из исходного файла библиотеки
       const original = await getNodeFromOriginalFile(
         node.mainComponent.fileKey,
         node.mainComponent.nodeId
@@ -91,7 +90,6 @@ async function main() {
 
   console.log(`📦 Всего компонентов во всех файлах: ${allComponents.length}`);
 
-  // Пишем в Google Sheets
   const values = [['Name', 'Description'], ...allComponents.map(c => [c.name, c.description])];
 
   await sheets.spreadsheets.values.update({

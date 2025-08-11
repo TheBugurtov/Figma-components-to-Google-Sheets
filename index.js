@@ -29,12 +29,13 @@ async function writeToGoogleSheets(components) {
 
   const sheet = doc.sheetsByIndex[0];
   await sheet.clear();
-  await sheet.setHeaderRow(["Name", "Description", "Key", "File"]);
+  await sheet.setHeaderRow(["Name", "Description", "Link", "Type", "File"]);
 
   const rows = components.map(c => ({
     Name: c.name || "",
     Description: c.description || "",
-    Key: c.node_id || "",
+    Link: `https://www.figma.com/file/${c.file_key}?node-id=${encodeURIComponent(c.node_id)}`,
+    Type: c.containing_frame?.node_type === "COMPONENT_SET" ? "Component Set" : "Component",
     File: c.file_key || ""
   }));
 

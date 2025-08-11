@@ -19,30 +19,21 @@ async function fetchJson(url) {
   return await res.json();
 }
 
-// 1) Получаем полную структуру файла
-async function getFileDocument(fileKey) {
-  const url = `https://api.figma.com/v1/files/${fileKey}`;
-  const data = await fetchJson(url);
-  return data.document;
-}
-
-// 2) Получаем список всех компонентов с description из API /components (включая опубликованные description)
+// Получаем все компоненты с description из /components
 async function getAllComponents(fileKey) {
   const url = `https://api.figma.com/v1/files/${fileKey}/components`;
   const data = await fetchJson(url);
-  // components в формате { node_id: {name, description, ...} }
   return data.meta.components || {};
 }
 
-// 3) Рекурсивно обходим весь документ, собираем все COMPONENT и COMPONENT_SET
+// Обходим дерево, чтобы вытащить ID и типы (но description позже добавляем из API)
 function collectComponentsFromNode(node, acc) {
   if (!node) return;
   if (node.type === "COMPONENT" || node.type === "COMPONENT_SET") {
     acc.push({
       id: node.id,
       name: node.name,
-      type: node.type,
-      // description будет добавлен позже
+      type: node.type
     });
   }
   if (Array.isArray(node.children)) {
@@ -52,7 +43,7 @@ function collectComponentsFromNode(node, acc) {
   }
 }
 
-// 4) Объединяем описание из /components API с найденными в дереве компонентами
+// Объединяем данные: description берём только из API
 function mergeDescriptions(componentsFromTree, componentsFromAPI) {
   return componentsFromTree.map(c => {
     const descObj = componentsFromAPI[c.id];
@@ -64,35 +55,6 @@ function mergeDescriptions(componentsFromTree, componentsFromAPI) {
   });
 }
 
-// 5) Дополнительный запрос к /nodes для получения описания, если оно пустое
-async function getNodeDescription(fileKey, nodeId) {
-  const url = `https://api.figma.com/v1/files/${fileKey}/nodes?ids=${nodeId}`;
-  const data = await fetchJson(url);
-  const nodeData = data.nodes[nodeId];
-  if (!nodeData) return "";
-  if (nodeData.document && typeof nodeData.document.description === "string") {
-    return nodeData.document.description;
-  }
-  if (typeof nodeData.description === "string") {
-    return nodeData.description;
-  }
-  return "";
-}
-
-async function enrichDescriptions(fileKey, components) {
-  for (const comp of components) {
-    if (!comp.description || comp.description.trim() === "") {
-      try {
-        const desc = await getNodeDescription(fileKey, comp.id);
-        comp.description = desc || "";
-      } catch (e) {
-        console.warn(`Не удалось получить описание для ${comp.id}:`, e.message);
-      }
-    }
-  }
-}
-
-// 6) Запись в Google Sheets
 async function writeToGoogleSheets(components) {
   const doc = new GoogleSpreadsheet(GOOGLE_SHEETS_ID);
   await doc.useServiceAccountAuth(GOOGLE_CREDENTIALS);
@@ -129,22 +91,20 @@ async function writeToGoogleSheets(components) {
       const fileKey = match[1];
 
       // Получаем дерево документа
-      const documentTree = await getFileDocument(fileKey);
+      const fileData = await fetchJson(`https://api.figma.com/v1/files/${fileKey}`);
+      const documentTree = fileData.document;
 
-      // Получаем компоненты из API (с описаниями)
+      // Получаем компоненты из API (с description)
       const componentsFromAPI = await getAllComponents(fileKey);
 
-      // Получаем все компоненты и наборы из дерева
+      // Получаем все COMPONENT и COMPONENT_SET из дерева
       const componentsFromTree = [];
       collectComponentsFromNode(documentTree, componentsFromTree);
 
-      // Мержим описания из /components API
-      let merged = mergeDescriptions(componentsFromTree, componentsFromAPI);
+      // Объединяем данные
+      const merged = mergeDescriptions(componentsFromTree, componentsFromAPI);
 
-      // Обогащаем описания компонентам с пустым описанием через /nodes запросы
-      await enrichDescriptions(fileKey, merged);
-
-      // Добавляем file_key если нет
+      // Если в API не вернулся file_key — добавим его вручную
       merged.forEach(c => { if (!c.file_key) c.file_key = fileKey; });
 
       allComponents.push(...merged);
@@ -154,7 +114,7 @@ async function writeToGoogleSheets(components) {
 
     await writeToGoogleSheets(allComponents);
 
-    console.log("✅ Готово! Все компоненты записаны в Google Sheets.");
+    console.log("✅ Готово! Данные записаны в Google Sheets.");
   } catch (e) {
     console.error("❌ Ошибка:", e);
     process.exit(1);

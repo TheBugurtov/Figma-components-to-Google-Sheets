@@ -26,7 +26,7 @@ async function getAllComponents(fileKey) {
   return data.meta.components || {};
 }
 
-// Обходим дерево, чтобы вытащить ID и типы (но description позже добавляем из API)
+// Обходим дерево, чтобы вытащить ID и типы
 function collectComponentsFromNode(node, acc) {
   if (!node) return;
   if (node.type === "COMPONENT" || node.type === "COMPONENT_SET") {
@@ -43,14 +43,16 @@ function collectComponentsFromNode(node, acc) {
   }
 }
 
-// Объединяем данные: description берём только из API
-function mergeDescriptions(componentsFromTree, componentsFromAPI) {
+// Объединяем: description -> Tags, Link формируем
+function mergeData(componentsFromTree, componentsFromAPI, fileKey) {
   return componentsFromTree.map(c => {
     const descObj = componentsFromAPI[c.id];
+    const description = descObj ? descObj.description || "" : "";
     return {
-      ...c,
-      description: descObj ? descObj.description || "" : "",
-      file_key: descObj ? descObj.file_key || "" : ""
+      component: c.name || "",
+      link: `https://www.figma.com/file/${fileKey}?node-id=${encodeURIComponent(c.id)}`,
+      tags: description,
+      type: c.type
     };
   });
 }
@@ -62,17 +64,9 @@ async function writeToGoogleSheets(components) {
 
   const sheet = doc.sheetsByIndex[0];
   await sheet.clear();
-  await sheet.setHeaderRow(["Name", "Type", "Description", "Key", "File"]);
+  await sheet.setHeaderRow(["Component", "Link", "Tags", "Type"]);
 
-  const rows = components.map(c => ({
-    Name: c.name || "",
-    Type: c.type || "",
-    Description: c.description || "",
-    Key: c.id || "",
-    File: c.file_key || ""
-  }));
-
-  await sheet.addRows(rows);
+  await sheet.addRows(components);
 }
 
 (async () => {
@@ -90,31 +84,27 @@ async function writeToGoogleSheets(components) {
       }
       const fileKey = match[1];
 
-      // Получаем дерево документа
+      // Получаем дерево
       const fileData = await fetchJson(`https://api.figma.com/v1/files/${fileKey}`);
       const documentTree = fileData.document;
 
-      // Получаем компоненты из API (с description)
+      // Компоненты из API (с description)
       const componentsFromAPI = await getAllComponents(fileKey);
 
-      // Получаем все COMPONENT и COMPONENT_SET из дерева
+      // Компоненты из дерева
       const componentsFromTree = [];
       collectComponentsFromNode(documentTree, componentsFromTree);
 
-      // Объединяем данные
-      const merged = mergeDescriptions(componentsFromTree, componentsFromAPI);
-
-      // Если в API не вернулся file_key — добавим его вручную
-      merged.forEach(c => { if (!c.file_key) c.file_key = fileKey; });
-
+      // Объединяем
+      const merged = mergeData(componentsFromTree, componentsFromAPI, fileKey);
       allComponents.push(...merged);
     }
 
-    console.log(`📦 Всего компонентов во всех файлах: ${allComponents.length}`);
+    console.log(`📦 Всего компонентов: ${allComponents.length}`);
 
     await writeToGoogleSheets(allComponents);
 
-    console.log("✅ Готово! Данные записаны в Google Sheets.");
+    console.log("✅ Готово! Таблица обновлена.");
   } catch (e) {
     console.error("❌ Ошибка:", e);
     process.exit(1);

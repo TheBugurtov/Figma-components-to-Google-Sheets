@@ -2,59 +2,24 @@ const fs = require("fs");
 const fetch = require("node-fetch");
 const { GoogleSpreadsheet } = require("google-spreadsheet");
 
+// === Чтение токенов и настроек из переменных окружения ===
 const FIGMA_TOKEN = process.env.FIGMA_TOKEN;
 const GOOGLE_CREDENTIALS = JSON.parse(process.env.GOOGLE_CREDENTIALS);
 const GOOGLE_SHEETS_ID = process.env.GOOGLE_SHEETS_ID;
 
-const filesList = fs.readFileSync("figma_files.txt", "utf8")
-  .split("\n")
-  .map(l => l.trim())
-  .filter(Boolean);
+// === Чтение списка файлов Figma из figma_files.txt ===
+const filesList = fs.readFileSync("figma_files.txt", "utf8").split("\n").filter(Boolean);
 
-async function fetchJson(url) {
-  const res = await fetch(url, { headers: { "X-Figma-Token": FIGMA_TOKEN } });
-  if (!res.ok) {
-    throw new Error(Ошибка запроса к ${url}: ${res.status} ${res.statusText});
-  }
-  return await res.json();
-}
-
-// Получаем все компоненты с description из /components
-async function getAllComponents(fileKey) {
-  const url = https://api.figma.com/v1/files/${fileKey}/components;
-  const data = await fetchJson(url);
-  return data.meta.components || {};
-}
-
-// Обходим дерево, чтобы вытащить ID и типы
-function collectComponentsFromNode(node, acc) {
-  if (!node) return;
-  if (node.type === "COMPONENT" || node.type === "COMPONENT_SET") {
-    acc.push({
-      id: node.id,
-      name: node.name,
-      type: node.type
-    });
-  }
-  if (Array.isArray(node.children)) {
-    for (const child of node.children) {
-      collectComponentsFromNode(child, acc);
-    }
-  }
-}
-
-// Объединяем: description -> Tags, Link формируем
-function mergeData(componentsFromTree, componentsFromAPI, fileKey) {
-  return componentsFromTree.map(c => {
-    const descObj = componentsFromAPI[c.id];
-    const description = descObj ? descObj.description || "" : "";
-    return {
-      component: c.name || "",
-      link: https://www.figma.com/file/${fileKey}?node-id=${encodeURIComponent(c.id)},
-      tags: description,
-      type: c.type
-    };
+async function getAllFigmaComponents(fileKey) {
+  const url = `https://api.figma.com/v1/files/${fileKey}/components`;
+  const res = await fetch(url, {
+    headers: { "X-Figma-Token": FIGMA_TOKEN }
   });
+  if (!res.ok) {
+    throw new Error(`Ошибка Figma API: ${res.status} ${res.statusText}`);
+  }
+  const data = await res.json();
+  return Object.values(data.meta.components); // все компоненты
 }
 
 async function writeToGoogleSheets(components) {
@@ -64,49 +29,39 @@ async function writeToGoogleSheets(components) {
 
   const sheet = doc.sheetsByIndex[0];
   await sheet.clear();
-  await sheet.setHeaderRow(["Component", "Link", "Tags", "Type"]);
+  await sheet.setHeaderRow(["Name", "Description", "Key", "File"]);
 
-  await sheet.addRows(components);
+  const rows = components.map(c => ({
+    Name: c.name || "",
+    Description: c.description || "",
+    Key: c.node_id || "",
+    File: c.file_key || ""
+  }));
+
+  await sheet.addRows(rows);
 }
 
 (async () => {
-  try {
-    console.log("🚀 Старт процесса...");
+  console.log("🚀 Старт процесса...");
 
-    let allComponents = [];
+  let allComponents = [];
 
-    for (const fileUrl of filesList) {
-      console.log(🔍 Обработка файла: ${fileUrl});
-      const match = fileUrl.match(/file\/([a-zA-Z0-9]+)\//);
-      if (!match) {
-        console.warn(⚠ Не удалось извлечь ключ файла из URL: ${fileUrl});
-        continue;
-      }
-      const fileKey = match[1];
-
-      // Получаем дерево
-      const fileData = await fetchJson(https://api.figma.com/v1/files/${fileKey});
-      const documentTree = fileData.document;
-
-      // Компоненты из API (с description)
-      const componentsFromAPI = await getAllComponents(fileKey);
-
-      // Компоненты из дерева
-      const componentsFromTree = [];
-      collectComponentsFromNode(documentTree, componentsFromTree);
-
-      // Объединяем
-      const merged = mergeData(componentsFromTree, componentsFromAPI, fileKey);
-      allComponents.push(...merged);
+  for (const fileUrl of filesList) {
+    console.log(`🔍 Обработка файла: ${fileUrl}`);
+    const match = fileUrl.match(/file\/([a-zA-Z0-9]+)\//);
+    if (!match) {
+      console.warn(`⚠ Не удалось извлечь ключ файла из URL: ${fileUrl}`);
+      continue;
     }
-
-    console.log(📦 Всего компонентов: ${allComponents.length});
-
-    await writeToGoogleSheets(allComponents);
-
-    console.log("✅ Готово! Таблица обновлена.");
-  } catch (e) {
-    console.error("❌ Ошибка:", e);
-    process.exit(1);
+    const fileKey = match[1];
+    const comps = await getAllFigmaComponents(fileKey);
+    console.log(`   Всего компонентов в файле: ${comps.length}`);
+    allComponents.push(...comps.map(c => ({ ...c, file_key: fileKey })));
   }
+
+  console.log(`📦 Всего компонентов во всех файлах: ${allComponents.length}`);
+
+  await writeToGoogleSheets(allComponents);
+
+  console.log("✅ Готово! Все компоненты записаны в Google Sheets.");
 })();

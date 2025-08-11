@@ -43,7 +43,7 @@ function collectComponentsFromNode(node, acc) {
   }
 }
 
-// Объединяем данные
+// Объединяем: description -> Tags, Link формируем
 function mergeData(componentsFromTree, componentsFromAPI, fileKey) {
   return componentsFromTree.map(c => {
     const descObj = componentsFromAPI[c.id];
@@ -53,7 +53,7 @@ function mergeData(componentsFromTree, componentsFromAPI, fileKey) {
       link: `https://www.figma.com/file/${fileKey}?node-id=${encodeURIComponent(c.id)}`,
       tags: description,
       type: c.type,
-      group: c.type === "COMPONENT_SET" ? "Components Set" : "Component"
+      typeLabel: c.type === "COMPONENT_SET" ? "Component Set" : "Component"
     };
   });
 }
@@ -65,7 +65,7 @@ async function writeToGoogleSheets(components) {
 
   const sheet = doc.sheetsByIndex[0];
   await sheet.clear();
-  await sheet.setHeaderRow(["Component", "Link", "Tags", "Type", "Group"]);
+  await sheet.setHeaderRow(["Component", "Link", "Tags", "Type", "Type Label"]);
 
   await sheet.addRows(components);
 }

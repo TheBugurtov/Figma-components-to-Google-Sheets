@@ -14,14 +14,14 @@ const filesList = fs.readFileSync("figma_files.txt", "utf8")
 async function fetchJson(url) {
   const res = await fetch(url, { headers: { "X-Figma-Token": FIGMA_TOKEN } });
   if (!res.ok) {
-    throw new Error(`Ошибка запроса к ${url}: ${res.status} ${res.statusText}`);
+    throw new Error(Ошибка запроса к ${url}: ${res.status} ${res.statusText});
   }
   return await res.json();
 }
 
 // Получаем все компоненты с description из /components
 async function getAllComponents(fileKey) {
-  const url = `https://api.figma.com/v1/files/${fileKey}/components`;
+  const url = https://api.figma.com/v1/files/${fileKey}/components;
   const data = await fetchJson(url);
   return data.meta.components || {};
 }
@@ -50,10 +50,9 @@ function mergeData(componentsFromTree, componentsFromAPI, fileKey) {
     const description = descObj ? descObj.description || "" : "";
     return {
       component: c.name || "",
-      link: `https://www.figma.com/file/${fileKey}?node-id=${encodeURIComponent(c.id)}`,
+      link: https://www.figma.com/file/${fileKey}?node-id=${encodeURIComponent(c.id)},
       tags: description,
-      type: c.type,
-      typeLabel: c.type === "COMPONENT_SET" ? "Component Set" : "Component"
+      type: c.type
     };
   });
 }
@@ -65,7 +64,7 @@ async function writeToGoogleSheets(components) {
 
   const sheet = doc.sheetsByIndex[0];
   await sheet.clear();
-  await sheet.setHeaderRow(["Component", "Link", "Tags", "Type", "Type Label"]);
+  await sheet.setHeaderRow(["Component", "Link", "Tags", "Type"]);
 
   await sheet.addRows(components);
 }
@@ -77,16 +76,16 @@ async function writeToGoogleSheets(components) {
     let allComponents = [];
 
     for (const fileUrl of filesList) {
-      console.log(`🔍 Обработка файла: ${fileUrl}`);
+      console.log(🔍 Обработка файла: ${fileUrl});
       const match = fileUrl.match(/file\/([a-zA-Z0-9]+)\//);
       if (!match) {
-        console.warn(`⚠ Не удалось извлечь ключ файла из URL: ${fileUrl}`);
+        console.warn(⚠ Не удалось извлечь ключ файла из URL: ${fileUrl});
         continue;
       }
       const fileKey = match[1];
 
       // Получаем дерево
-      const fileData = await fetchJson(`https://api.figma.com/v1/files/${fileKey}`);
+      const fileData = await fetchJson(https://api.figma.com/v1/files/${fileKey});
       const documentTree = fileData.document;
 
       // Компоненты из API (с description)
@@ -101,7 +100,7 @@ async function writeToGoogleSheets(components) {
       allComponents.push(...merged);
     }
 
-    console.log(`📦 Всего компонентов: ${allComponents.length}`);
+    console.log(📦 Всего компонентов: ${allComponents.length});
 
     await writeToGoogleSheets(allComponents);
 

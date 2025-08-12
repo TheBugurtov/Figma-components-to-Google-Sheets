@@ -44,3 +44,5 @@ jobs:
         git add components.csv
         git commit -m "Update components.csv" || echo "No changes to commit"
         git push
+       env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

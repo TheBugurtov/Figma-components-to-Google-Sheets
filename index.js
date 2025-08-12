@@ -2,6 +2,9 @@ const fs = require('fs');
 const fetch = require('node-fetch');
 const { GoogleSpreadsheet } = require('google-spreadsheet');
 
+// Добавим CSV-конвертер
+const { Parser } = require('json2csv');
+
 const FIGMA_TOKEN = process.env.FIGMA_TOKEN;
 const GOOGLE_CREDENTIALS = JSON.parse(process.env.GOOGLE_CREDENTIALS);
 const GOOGLE_SHEETS_ID = process.env.GOOGLE_SHEETS_ID;
@@ -16,12 +19,10 @@ async function fetchJson(url) {
 
 function extractTagsFromDescription(desc) {
   if (!desc || typeof desc !== 'string') return [];
-  // ловим #теги — латиница, цифры, подчёрки и кириллица, дефис
   const re = /#[\w\u0400-\u04FF-]+/gi;
   const m = desc.match(re);
   if (!m) return [];
-  // убираем '#'
-  return [...new Set(m.map(t => t.replace(/^#/, '')))]; // unique
+  return [...new Set(m.map(t => t.replace(/^#/, '')))];
 }
 
 function chunkArray(arr, size) {
@@ -45,6 +46,15 @@ async function writeRowsToSheet(rows) {
   }
 }
 
+// Новая функция — запись CSV
+function writeRowsToCsv(rows, filePath) {
+  const fields = ['Component', 'Tags', 'Link', 'File'];
+  const parser = new Parser({ fields });
+  const csv = parser.parse(rows);
+  fs.writeFileSync(filePath, csv, 'utf8');
+  console.log(`📄 CSV сохранён: ${filePath}`);
+}
+
 // main
 (async () => {
   try {
@@ -63,17 +73,14 @@ async function writeRowsToSheet(rows) {
       }
       const fileKey = m[1];
 
-      // 1) получаем метаданные файла (имя) и дерево
       const fileData = await fetchJson(`https://api.figma.com/v1/files/${fileKey}`);
       const fileName = fileData.name || (m[2] ? decodeURIComponent(m[2]).replace(/[-_]/g, ' ') : fileKey);
       const documentTree = fileData.document;
 
-      // 2) получаем components (meta) — объект node_id -> meta
       const compsResp = await fetchJson(`https://api.figma.com/v1/files/${fileKey}/components`);
       const compsObj = compsResp.meta?.components || {};
 
-      // 3) строим map nodeId -> nearest component set name (если есть)
-      const parentSetMap = {}; // nodeId -> parent component set name or null
+      const parentSetMap = {};
       (function walk(node, currentSetName = null) {
         if (!node) return;
         if (node.type === 'COMPONENT_SET') currentSetName = node.name || currentSetName;
@@ -83,18 +90,16 @@ async function writeRowsToSheet(rows) {
         }
       })(documentTree, null);
 
-      // 4) перебираем все компоненты из /components (Object values)
       const compsList = Object.values(compsObj);
       console.log(`   Всего компонентов из /components: ${compsList.length}`);
 
       let hitCount = 0;
       for (const c of compsList) {
         const desc = c.description || '';
-        if (!desc.includes('#')) continue; // детект по символу '#'
+        if (!desc.includes('#')) continue;
         hitCount++;
 
         const nodeId = c.node_id || c.nodeId || c.key || c.id || '';
-        // если этот node находится внутри component set, берем имя сетa
         const parentSetName = parentSetMap[nodeId] || null;
         const displayName = parentSetName ? parentSetName : (c.name || '');
         const tags = extractTagsFromDescription(desc).join(', ');
@@ -112,7 +117,9 @@ async function writeRowsToSheet(rows) {
     }
 
     console.log(`📦 Всего строк для записи: ${allRows.length}`);
-    await writeRowsToSheet(allRows);
+    await writeRowsToSheet(allRows); // В Google Sheets
+    writeRowsToCsv(allRows, 'components.csv'); // В CSV
+
     console.log('✅ Готово.');
   } catch (err) {
     console.error('❌ Ошибка:', err);

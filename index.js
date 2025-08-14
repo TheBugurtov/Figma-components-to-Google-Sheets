@@ -19,10 +19,10 @@ async function fetchJson(url) {
 
 function extractTagsFromDescription(desc) {
   if (!desc || typeof desc !== 'string') return [];
-  const re = /#[\w\u0400-\u04FF-]+/gi;
-  const m = desc.match(re);
-  if (!m) return [];
-  return [...new Set(m.map(t => t.replace(/^#/, '')))];
+  const re = /#([^\#\n]+)/g;
+  const m = [...desc.matchAll(re)];
+  if (!m.length) return [];
+  return [...new Set(m.map(t => t[1].trim()))];
 }
 
 function chunkArray(arr, size) {

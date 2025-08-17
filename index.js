@@ -2,7 +2,7 @@ const fs = require('fs');
 const fetch = require('node-fetch');
 const { GoogleSpreadsheet } = require('google-spreadsheet');
 
-// Добавим CSV-конвертер
+// CSV-конвертер
 const { Parser } = require('json2csv');
 
 const FIGMA_TOKEN = process.env.FIGMA_TOKEN;
@@ -38,7 +38,7 @@ async function writeRowsToSheet(rows) {
   const sheet = doc.sheetsByIndex[0];
 
   await sheet.clear();
-  await sheet.setHeaderRow(['Component', 'Tags', 'Link', 'File']);
+  await sheet.setHeaderRow(['Component', 'Tags', 'Link', 'File', 'Image']);
 
   const batches = chunkArray(rows, 500);
   for (const b of batches) {
@@ -46,9 +46,9 @@ async function writeRowsToSheet(rows) {
   }
 }
 
-// Новая функция — запись CSV
+// запись CSV
 function writeRowsToCsv(rows, filePath) {
-  const fields = ['Component', 'Tags', 'Link', 'File'];
+  const fields = ['Component', 'Tags', 'Link', 'File', 'Image'];
   const parser = new Parser({ fields });
   const csv = parser.parse(rows);
   fs.writeFileSync(filePath, csv, 'utf8');
@@ -104,12 +104,14 @@ function writeRowsToCsv(rows, filePath) {
         const displayName = parentSetName ? parentSetName : (c.name || '');
         const tags = extractTagsFromDescription(desc).join(', ');
         const link = `https://www.figma.com/file/${fileKey}?node-id=${encodeURIComponent(nodeId)}`;
+        const thumbnail = c.thumbnail_url || '';
 
         allRows.push({
           Component: displayName,
           Tags: tags,
           Link: link,
-          File: fileName
+          File: fileName,
+          Image: thumbnail ? `=IMAGE("${thumbnail}")` : '' // 👈 превью в Google Sheets
         });
       }
 
